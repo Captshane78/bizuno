@@ -87,7 +87,9 @@ class workforceAdmin
             msgAdd(lang('err_no_permission').' [wf_settings]');
             return;
         }
-        $layout = array_replace_recursive($layout, adminStructure($this->moduleID, $this->settingsStructure()), [
+        $structure = $this->settingsStructure();
+        $structure['ai']['fields']['api_key']['attr']['value'] = '';
+        $layout = array_replace_recursive($layout, adminStructure($this->moduleID, $structure), [
             'divs' => ['here'=>['order'=>18, 'type'=>'html', 'html'=>'<p><button type="button" onclick="wfHere();">Use my current location</button> Fills the latitude and longitude. Save settings after.</p>']],
             'jsHead'=>['wfHere'=>"function wfSetVal(id, v){ var el = jqBiz('#'+id); if (el.data('textbox')) { el.textbox('setValue', v); } else { el.val(v); } } function wfHere(){ if (!navigator.geolocation) { alert('Geolocation is not supported by this browser.'); return; } navigator.geolocation.getCurrentPosition(function(p){ wfSetVal('geo_latitude', p.coords.latitude); wfSetVal('geo_longitude', p.coords.longitude); }, function(){ alert('Could not read this device location.'); }, {enableHighAccuracy:true, timeout:10000, maximumAge:0}); }"],
         ]);

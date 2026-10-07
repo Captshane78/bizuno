@@ -45,7 +45,7 @@ class workforceLogs
         $rows = dbGetMulti(wfTbl('log'), wfWhere($parts), 'created_at DESC');
         $out = [];
         foreach (is_array($rows) ? $rows : [] as $row) {
-            $out[] = [
+            $out[] = wfShow([
                 'id'          => (int)$row['id'],
                 'who'         => wfUserName((int)$row['user_id']),
                 'log_text'    => $row['log_text'],
@@ -53,7 +53,7 @@ class workforceLogs
                 'quantity'    => $row['quantity'],
                 'duration'    => $row['duration'],
                 'created_at'  => $row['created_at'],
-            ];
+            ]);
         }
         $layout = array_replace_recursive($layout, ['type'=>'raw', 'content'=>json_encode(['total'=>count($out), 'rows'=>$out])]);
     }

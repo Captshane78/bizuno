@@ -45,10 +45,22 @@ wf_assert('datetime', wfDateTime('2026-10-07T08:05') === '2026-10-07 08:05:00');
 
 $csv = wfCsv(['Employee Name', 'Task'], [['Ann "A"', 'cut, pack']]);
 wf_assert('csv quotes', str_contains($csv, '"Ann ""A"""') && str_contains($csv, '"cut, pack"'));
+$formula = wfCsv(['Task'], [['=1+1'], ['+cmd'], ["\t@x"]]);
+wf_assert('csv neutralizes formulas', str_contains($formula, '"\'=1+1"') && str_contains($formula, '"\'+cmd"') && str_contains($formula, "\"'\t@x\""));
 
 $html = wfSafeHtml('<h2>Hi</h2><script>alert(1)</script><p onclick="x()">Ok</p>');
-wf_assert('strips script', !str_contains($html, 'script') && str_contains($html, '<h2>Hi</h2>'));
-wf_assert('strips handler', !str_contains($html, 'onclick'));
+wf_assert('strips script', !str_contains(strtolower($html), '<script') && str_contains($html, '<h2>Hi</h2>'));
+wf_assert('strips handler', !str_contains(strtolower($html), 'onclick'));
+$svg = wfSafeHtml('<svg/onload=alert(1)>');
+wf_assert('drops svg handler', !str_contains(strtolower($svg), 'onload') && !str_contains(strtolower($svg), '<svg'));
+$link = wfSafeHtml('<a href="javascript:alert(1)">click</a>');
+wf_assert('drops javascript link', !str_contains(strtolower($link), 'javascript') && str_contains($link, 'click'));
+$shown = wfShow(['id'=>4, 'task_text'=>'<svg/onload=alert(1)>', 'n'=>2]);
+wf_assert('grid cells are escaped', $shown['id'] === 4 && $shown['n'] === 2 && !str_contains($shown['task_text'], '<svg'));
+[$badLat] = wfFix(120.0, 10.0);
+wf_assert('rejects impossible coordinates', $badLat === null);
+[$okLat, $okLng] = wfFix(42.5, -83.25);
+wf_assert('keeps a real coordinate', $okLat === 42.5 && $okLng === -83.25);
 
 wf_assert('domain allowed', wfEmailAllowed('Pat@TeamDreamweaver.com', 'teamdreamweaver.com', []) === true);
 wf_assert('whitelist allowed', wfEmailAllowed('a@gmail.com', 'teamdreamweaver.com', ['A@gmail.com']) === true);

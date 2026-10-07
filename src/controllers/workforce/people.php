@@ -88,16 +88,16 @@ class workforcePeople
         $out = [];
         foreach (wfUsers() as $user) {
             $id = (int)$user['id'];
-            $out[] = [
-                'id'       => $id,
-                'who'      => wfContactName($user),
-                'email'    => $user['email'] ?? '',
-                'state'    => !empty($open[$id]) ? 'In' : 'Out',
-                'today'    => wfFormatHours($seconds[$id] ?? 0),
-                'tasks'    => $tasks[$id] ?? 0,
-                'leave'    => $leave[$id] ?? 0,
-                'supplies' => $supply[$id] ?? 0,
-            ];
+        $out[] = wfShow([
+            'id'       => $id,
+            'who'      => wfContactName($user),
+            'email'    => $user['email'] ?? '',
+            'state'    => !empty($open[$id]) ? 'In' : 'Out',
+            'today'    => wfFormatHours($seconds[$id] ?? 0),
+            'tasks'    => (int)($tasks[$id] ?? 0),
+            'leave'    => (int)($leave[$id] ?? 0),
+            'supplies' => (int)($supply[$id] ?? 0),
+        ]);
         }
         $layout = array_replace_recursive($layout, ['type'=>'raw', 'content'=>json_encode(['total'=>count($out), 'rows'=>$out])]);
     }
@@ -136,8 +136,12 @@ class workforcePeople
     {
         if (!wfGuard('wf_people', 2)) { return; }
         $id = (int)clean('rID', 'integer', 'get');
-        $row = dbGetRow(BIZUNO_DB_PREFIX.'contacts', 'id='.$id);
-        if (!is_array($row) || empty($row['email'])) {
+        $row = wfContactUser($id);
+        if (!$row) {
+            $layout = array_replace_recursive($layout, wfFail('That person is not an active Bizuno user.'));
+            return;
+        }
+        if (empty($row['email'])) {
             $layout = array_replace_recursive($layout, wfFail('That user has no email address.'));
             return;
         }

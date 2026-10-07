@@ -34,7 +34,11 @@ function wfEnsureTables(): void
             `start_time` DATETIME NOT NULL,
             `end_time` DATETIME NULL DEFAULT NULL,
             `duration` VARCHAR(16) NOT NULL DEFAULT '00:00:00',
+            `here_lat` DECIMAL(10,6) NULL DEFAULT NULL,
+            `here_lng` DECIMAL(10,6) NULL DEFAULT NULL,
+            `open_user` INT UNSIGNED NULL DEFAULT NULL,
             PRIMARY KEY (`id`),
+            UNIQUE KEY `one_open` (`open_user`),
             KEY `user_open` (`user_id`, `end_time`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
         'task' => "CREATE TABLE IF NOT EXISTS `".wfTbl('task')."` (
@@ -105,6 +109,22 @@ function wfEnsureTables(): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
     ];
     foreach ($tables as $sql) { dbGetResult($sql); }
+    wfEnsureTimeShape();
+}
+
+function wfEnsureTimeShape(): void
+{
+    if (!defined('BIZUNO_DB_PREFIX') || !function_exists('dbTableExists') || !function_exists('dbFieldExists')) { return; }
+    $table = wfTbl('time');
+    if (!dbTableExists($table)) { return; }
+    if (!dbFieldExists($table, 'here_lat')) {
+        dbGetResult("ALTER TABLE `$table` ADD `here_lat` DECIMAL(10,6) NULL DEFAULT NULL, ADD `here_lng` DECIMAL(10,6) NULL DEFAULT NULL");
+    }
+    if (!dbFieldExists($table, 'open_user')) {
+        dbGetResult("ALTER TABLE `$table` ADD `open_user` INT UNSIGNED NULL DEFAULT NULL");
+        dbGetResult("UPDATE `$table` SET `open_user`=`user_id` WHERE `end_time` IS NULL");
+        dbGetResult("ALTER TABLE `$table` ADD UNIQUE KEY `one_open` (`open_user`)");
+    }
 }
 
 function wfSet(string $group, string $key, $default = '')
@@ -193,7 +213,28 @@ function wfCoords(): array
 {
     $data = str_replace(' ', '', (string)clean('data', 'text', 'get'));
     if (!preg_match('/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/', $data, $m)) { return [null, null]; }
-    return [(float)$m[1], (float)$m[2]];
+    return wfFix((float)$m[1], (float)$m[2]);
+}
+
+function wfContactUser(int $id, bool $activeOnly = true): array
+{
+    if ($id < 1 || !defined('BIZUNO_DB_PREFIX')) { return []; }
+    $row = dbGetRow(BIZUNO_DB_PREFIX.'contacts', 'id='.(int)$id." AND ctype_u='1'");
+    if (!is_array($row)) { return []; }
+    if ($activeOnly && (string)($row['inactive'] ?? '0') !== '0') { return []; }
+    return $row;
+}
+
+function wfWithUserLock(int $userId, callable $fn)
+{
+    $name = 'wf_open_'.(int)$userId;
+    $locked = defined('BIZUNO_DB_PREFIX');
+    if ($locked) { dbGetResult("SELECT GET_LOCK('$name', 5)"); }
+    try {
+        return $fn();
+    } finally {
+        if ($locked) { dbGetResult("SELECT RELEASE_LOCK('$name')"); }
+    }
 }
 
 function wfOpenTime(int $userId): array
@@ -217,35 +258,46 @@ function wfFenceCheck(?float $lat, ?float $lng): array
 
 function wfClockIn(int $userId, bool $enforceFence, ?float $lat, ?float $lng): array
 {
-    if (wfOpenTime($userId)) { return wfFail('That person is already clocked in.'); }
-    if ($enforceFence) {
-        $check = wfFenceCheck($lat, $lng);
-        if (!$check['ok']) {
-            if ($check['meters'] < 0) { return wfFail('Location is required to clock in. Allow location access and try again.'); }
-            $away = (int)round($check['meters']);
-            $radius = (int)wfSet('geo', 'radius', '0');
-            return wfFail("You must be within {$radius} meters of the work location to clock in. You are about {$away} meters away.");
+    return wfWithUserLock($userId, function () use ($userId, $enforceFence, $lat, $lng) {
+        if (!wfContactUser($userId)) { return wfFail('That person is not an active Bizuno user.'); }
+        if (wfOpenTime($userId)) { return wfFail('That person is already clocked in.'); }
+        [$lat, $lng] = wfFix($lat, $lng);
+        if ($enforceFence) {
+            $check = wfFenceCheck($lat, $lng);
+            if (!$check['ok']) {
+                if ($check['meters'] < 0) { return wfFail('Location is required to clock in. Allow location access and try again.'); }
+                $away = (int)round($check['meters']);
+                $radius = (int)wfSet('geo', 'radius', '0');
+                return wfFail("You must be within {$radius} meters of the work location to clock in. You are about {$away} meters away.");
+            }
         }
-    }
-    dbWrite(wfTbl('time'), [
-        'user_id'    => $userId,
-        'start_time' => date('Y-m-d H:i:s'),
-        'end_time'   => null,
-        'duration'   => '00:00:00',
-    ]);
-    return wfClockDone('Clocked in.');
+        $wrote = dbWrite(wfTbl('time'), [
+            'user_id'    => $userId,
+            'start_time' => date('Y-m-d H:i:s'),
+            'end_time'   => null,
+            'duration'   => '00:00:00',
+            'here_lat'   => $lat,
+            'here_lng'   => $lng,
+            'open_user'  => $userId,
+        ]);
+        if (!$wrote) { return wfFail('That person is already clocked in.'); }
+        return wfClockDone('Clocked in.');
+    });
 }
 
 function wfClockOut(int $userId): array
 {
-    $open = wfOpenTime($userId);
-    if (!$open) { return wfFail('Nobody is clocked in on that record.'); }
-    $end = date('Y-m-d H:i:s');
-    dbWrite(wfTbl('time'), [
-        'end_time' => $end,
-        'duration' => wfDuration((string)$open['start_time'], $end),
-    ], 'update', 'id='.(int)$open['id']);
-    return wfClockDone('Clocked out.');
+    return wfWithUserLock($userId, function () use ($userId) {
+        $open = wfOpenTime($userId);
+        if (!$open) { return wfFail('Nobody is clocked in on that record.'); }
+        $end = date('Y-m-d H:i:s');
+        dbWrite(wfTbl('time'), [
+            'end_time'  => $end,
+            'duration'  => wfDuration((string)$open['start_time'], $end),
+            'open_user' => null,
+        ], 'update', 'id='.(int)$open['id']);
+        return wfClockDone('Clocked out.');
+    });
 }
 
 function wfScope(string $ownSec, string $mgrSec): int
@@ -271,15 +323,22 @@ function wfActor(string $ownSec, string $mgrSec, int $level): int
     $mine = (int)clean('mine', 'integer', 'get');
     if ($mine) {
         if (!wfGuard($ownSec, $level)) { return 0; }
-        return wfUserId();
+        $user = wfUserId();
+    } else {
+        $posted = (int)clean('user_id', 'integer', 'post');
+        if ($posted > 0 && $posted !== wfUserId()) {
+            if (!wfGuard($mgrSec, $level)) { return 0; }
+            $user = $posted;
+        } else {
+            if (!wfGuard($ownSec, $level, false) && !wfGuard($mgrSec, $level)) { return 0; }
+            $user = $posted > 0 ? $posted : wfUserId();
+        }
     }
-    $posted = (int)clean('user_id', 'integer', 'post');
-    if ($posted > 0 && $posted !== wfUserId()) {
-        if (!wfGuard($mgrSec, $level)) { return 0; }
-        return $posted;
+    if (!wfContactUser($user)) {
+        msgAdd('Choose an active Bizuno user.');
+        return 0;
     }
-    if (!wfGuard($ownSec, $level, false) && !wfGuard($mgrSec, $level)) { return 0; }
-    return $posted > 0 ? $posted : wfUserId();
+    return $user;
 }
 
 function wfOwnRow(string $table, int $id): array

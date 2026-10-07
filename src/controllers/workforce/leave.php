@@ -38,7 +38,7 @@ class workforceLeave
         $rows = dbGetMulti(wfTbl('leave'), $where, 'requested_at DESC');
         $out = [];
         foreach (is_array($rows) ? $rows : [] as $row) {
-            $out[] = [
+            $out[] = wfShow([
                 'id'           => (int)$row['id'],
                 'who'          => wfUserName((int)$row['user_id']),
                 'leave_type'   => $row['leave_type'],
@@ -47,7 +47,7 @@ class workforceLeave
                 'reason'       => $row['reason'],
                 'status'       => $row['status'],
                 'requested_at' => $row['requested_at'],
-            ];
+            ]);
         }
         $layout = array_replace_recursive($layout, ['type'=>'raw', 'content'=>json_encode(['total'=>count($out), 'rows'=>$out])]);
     }

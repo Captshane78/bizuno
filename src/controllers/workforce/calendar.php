@@ -61,12 +61,12 @@ class workforceCalendar
         $rows = dbGetMulti(wfTbl('event'), '', 'event_date');
         $out = [];
         foreach (is_array($rows) ? $rows : [] as $row) {
-            $out[] = [
+            $out[] = wfShow([
                 'id'         => (int)$row['id'],
                 'event_date' => $row['event_date'],
                 'event_name' => $row['event_name'],
                 'event_type' => $row['event_type'],
-            ];
+            ]);
         }
         $layout = array_replace_recursive($layout, ['type'=>'raw', 'content'=>json_encode(['total'=>count($out), 'rows'=>$out])]);
     }

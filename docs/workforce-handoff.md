@@ -64,11 +64,11 @@ A floor employee only needs **My Shift**. Give managers the other keys. The dash
 
 | Group | Defaults | What it does |
 | --- | --- | --- |
-| Workplace location | enabled `0`, latitude `0`, longitude `0`, radius `150` meters | When enabled, an employee clock-in must include coordinates inside the radius. **Use my current location** fills the lat/lng fields in the browser. Save after that. |
-| Gemini reports | model `gemini-flash-latest`, API key empty | Server-side request to `generativelanguage.googleapis.com`. The key is a password field, so a blank save keeps the stored key. |
+| Workplace location | enabled `0`, latitude `0`, longitude `0`, radius `150` meters | When enabled, an employee clock-in must include coordinates inside the radius. **Use my current location** fills the lat/lng fields in the browser. Save after that. The punch stores the coordinates the browser sent. That is a reported location. |
+| Gemini reports | model `gemini-flash-latest`, API key empty | Server-side request to `generativelanguage.googleapis.com`. The settings page does not print the saved key. A blank save keeps it. |
 | Invites | domain `teamdreamweaver.com` | Welcome-email gate, together with the People whitelist. |
 
-Employee clock-in on My Shift enforces the fence on the server. A missing location while the fence is on is rejected. Manager clock-in from People or Time Entries does not enforce the fence.
+Employee clock-in on My Shift checks the reported coordinates on the server and stores them on the punch. A missing or out-of-range location is rejected while the fence is on. A request that simply sends the shop's coordinates still passes, because the server cannot prove where the device is. Manager clock-in from People or Time Entries does not enforce the fence. One open punch per person is enforced with a lock and a unique key. Clock-in, welcome email, and assigning work require an active Bizuno user (`ctype_u = 1`, status active).
 
 ## Screens
 
@@ -85,7 +85,7 @@ CSV columns match the source export:
 - Tasks: `Employee Name, Task, Status, Created At`
 - Logs: `Employee Name, Activity, Part Number, Quantity, Duration, Date`
 
-Gemini prompts are the four prompts from `DW-Gemini-TC-APP` `services/geminiService.ts`. Reports are HTML fragments. They do not include `<html>` or `<body>`.
+Gemini prompts are the four prompts from `DW-Gemini-TC-APP` `services/geminiService.ts`. Reports are HTML fragments limited to headings, paragraphs, lists, and bold or italic text. Grid text is escaped before EasyUI writes it into the page. CSV cells that start with `=`, `+`, `-`, `@`, or a tab are prefixed so a spreadsheet does not treat them as formulas.
 
 ## Tables
 
@@ -93,7 +93,7 @@ Created by `wfEnsureTables()` on install, initialize, or the first Workforce pag
 
 | Table | Holds |
 | --- | --- |
-| `workforce_time` | `user_id`, `start_time`, `end_time` (null while open), `duration` as `HH:mm:ss` |
+| `workforce_time` | `user_id`, `start_time`, `end_time` (null while open), `duration` as `HH:mm:ss`, reported `here_lat`/`here_lng`. `open_user` is unique while the punch is open. |
 | `workforce_task` | `user_id`, `task_text`, `completed`, `created_at` |
 | `workforce_log` | `user_id`, `log_text`, `part_number`, `quantity`, `duration` (free text), `created_at` |
 | `workforce_supply` | part, quantity, reason, `pending`/`handled`, source, handled by/at |
@@ -140,7 +140,7 @@ These Dreamweaver Workforce pieces stay there. Bizuno already has the equivalent
 - Resend. Bizuno mail sends the welcome message.
 - Creating a password from Workforce. New accounts are Administration → Users.
 - Signup limited to `@teamdreamweaver.com` at the login screen. The domain and whitelist gate the welcome email only.
-- Browser-only geofence. The server checks employee clock-in again.
+- A geofence that can prove the phone is at the shop. The server checks and stores the coordinates the browser posts.
 
 ## Behaviors to expect
 

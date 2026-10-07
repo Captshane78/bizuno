@@ -98,7 +98,12 @@ function wfDateTime(string $raw): string
 
 function wfCsvCell($value): string
 {
-    return '"'.str_replace('"', '""', (string)$value).'"';
+    $text = (string)$value;
+    $first = $text === '' ? '' : $text[0];
+    if (preg_match('/^\s*[=+\-@]/', $text) || $first === "\t" || $first === "\r") {
+        $text = "'".$text;
+    }
+    return '"'.str_replace('"', '""', $text).'"';
 }
 
 function wfCsv(array $header, array $rows): string
@@ -109,12 +114,73 @@ function wfCsv(array $header, array $rows): string
     return implode("\n", $lines)."\n";
 }
 
+function wfShow(array $row): array
+{
+    $out = [];
+    foreach ($row as $key => $value) {
+        if ($key === 'id' || is_int($value) || is_float($value)) {
+            $out[$key] = $value;
+            continue;
+        }
+        $out[$key] = wfH($value);
+    }
+    return $out;
+}
+
+/**
+ * Keep a reported GPS fix only when both numbers are inside the valid range.
+ * @return array{0:?float,1:?float}
+ */
+function wfFix(?float $lat, ?float $lng): array
+{
+    if ($lat === null || $lng === null) { return [null, null]; }
+    if ($lat < -90.0 || $lat > 90.0 || $lng < -180.0 || $lng > 180.0) { return [null, null]; }
+    return [$lat, $lng];
+}
+
 function wfSafeHtml(string $html): string
 {
-    $html = preg_replace('#<(script|iframe|object|embed|style)\b[^>]*>.*?</\1>#is', '', $html) ?? '';
-    $html = preg_replace('#<(script|iframe|object|embed)\b[^>]*/?>#is', '', $html) ?? '';
-    $html = preg_replace('/\son\w+\s*=\s*("[^"]*"|\'[^\']*\'|[^\s>]+)/i', '', $html) ?? '';
-    return $html;
+    $allowed = ['h1'=>true, 'h2'=>true, 'h3'=>true, 'p'=>true, 'ul'=>true, 'ol'=>true, 'li'=>true, 'strong'=>true, 'em'=>true, 'b'=>true, 'i'=>true, 'br'=>true];
+    if (!class_exists(\DOMDocument::class)) {
+        $html = strip_tags($html, '<h1><h2><h3><p><ul><ol><li><strong><em><b><i><br>');
+        return preg_replace('/<\s*([a-z0-9]+)\b[^>]*>/i', '<$1>', $html) ?? '';
+    }
+    $doc = new \DOMDocument();
+    $prev = libxml_use_internal_errors(true);
+    $doc->loadHTML(
+        '<!DOCTYPE html><html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>'.$html.'</body></html>',
+        LIBXML_HTML_NODEFDTD
+    );
+    libxml_clear_errors();
+    libxml_use_internal_errors($prev);
+    $body = $doc->getElementsByTagName('body')->item(0);
+    if (!$body) { return ''; }
+    wfScrubNodes($body, $allowed);
+    $out = '';
+    foreach (iterator_to_array($body->childNodes) as $child) {
+        $out .= $doc->saveHTML($child);
+    }
+    return $out;
+}
+
+function wfScrubNodes(\DOMNode $node, array $allowed): void
+{
+    $children = [];
+    foreach ($node->childNodes as $child) { $children[] = $child; }
+    foreach ($children as $child) {
+        if (!$child instanceof \DOMElement) { continue; }
+        wfScrubNodes($child, $allowed);
+        if (!isset($allowed[strtolower($child->tagName)])) {
+            while ($child->firstChild) { $node->insertBefore($child->firstChild, $child); }
+            $node->removeChild($child);
+            continue;
+        }
+        if ($child->attributes) {
+            while ($child->attributes->length > 0) {
+                $child->removeAttributeNode($child->attributes->item(0));
+            }
+        }
+    }
 }
 
 function wfEmailAllowed(string $email, string $domain, array $whitelist): bool

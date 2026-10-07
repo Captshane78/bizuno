@@ -56,14 +56,17 @@ class workforceTime
         $out = [];
         foreach (is_array($rows) ? $rows : [] as $row) {
             $open = empty($row['end_time']);
-            $out[] = [
+            $lat = $row['here_lat'] ?? null;
+            $claimed = ($lat === null || $lat === '') ? '' : $lat.', '.($row['here_lng'] ?? '');
+            $out[] = wfShow([
                 'id'         => (int)$row['id'],
                 'who'        => wfUserName((int)$row['user_id']),
                 'start_time' => $row['start_time'],
                 'end_time'   => $open ? '' : $row['end_time'],
                 'duration'   => $open ? wfDuration($row['start_time'], null) : $row['duration'],
                 'state'      => $open ? 'In' : 'Out',
-            ];
+                'claimed'    => $claimed,
+            ]);
         }
         $layout = array_replace_recursive($layout, ['type'=>'raw', 'content'=>json_encode(['total'=>count($out), 'rows'=>$out])]);
     }
@@ -75,24 +78,29 @@ class workforceTime
         $start = wfDateTime((string)clean('start_time', 'text', 'post'));
         $endRaw = trim((string)clean('end_time', 'text', 'post'));
         $end = $endRaw === '' ? '' : wfDateTime($endRaw);
-        if ($user < 1 || $start === '') {
-            $layout = array_replace_recursive($layout, wfFail('Choose an employee and a clock-in time.'));
+        if ($user < 1 || $start === '' || !wfContactUser($user)) {
+            $layout = array_replace_recursive($layout, wfFail('Choose an active employee and a clock-in time.'));
             return;
         }
         if ($end !== '' && $end < $start) {
             $layout = array_replace_recursive($layout, wfFail('Clock out is before clock in.'));
             return;
         }
-        if ($end === '' && wfOpenTime($user)) {
+        $write = function () use ($user, $start, $end) {
+            if ($end === '' && wfOpenTime($user)) { return false; }
+            return dbWrite(wfTbl('time'), [
+                'user_id'    => $user,
+                'start_time' => $start,
+                'end_time'   => $end === '' ? null : $end,
+                'duration'   => $end === '' ? '00:00:00' : wfDuration($start, $end),
+                'open_user'  => $end === '' ? $user : null,
+            ]);
+        };
+        $wrote = $end === '' ? wfWithUserLock($user, $write) : $write();
+        if (!$wrote) {
             $layout = array_replace_recursive($layout, wfFail('That person already has an open punch.'));
             return;
         }
-        dbWrite(wfTbl('time'), [
-            'user_id'    => $user,
-            'start_time' => $start,
-            'end_time'   => $end === '' ? null : $end,
-            'duration'   => $end === '' ? '00:00:00' : wfDuration($start, $end),
-        ]);
         $layout = array_replace_recursive($layout, wfReload('dgTime', 'Time entry added.', 'frmTime'));
     }
 
@@ -133,11 +141,22 @@ class workforceTime
             $layout = array_replace_recursive($layout, wfFail('Check the clock-in and clock-out times.'));
             return;
         }
-        dbWrite(wfTbl('time'), [
-            'start_time' => $start,
-            'end_time'   => $end === '' ? null : $end,
-            'duration'   => $end === '' ? '00:00:00' : wfDuration($start, $end),
-        ], 'update', 'id='.(int)$row['id']);
+        $user = (int)$row['user_id'];
+        $write = function () use ($row, $user, $start, $end) {
+            $open = wfOpenTime($user);
+            if ($end === '' && $open && (int)$open['id'] !== (int)$row['id']) { return false; }
+            return dbWrite(wfTbl('time'), [
+                'start_time' => $start,
+                'end_time'   => $end === '' ? null : $end,
+                'duration'   => $end === '' ? '00:00:00' : wfDuration($start, $end),
+                'open_user'  => $end === '' ? $user : null,
+            ], 'update', 'id='.(int)$row['id']);
+        };
+        $wrote = wfWithUserLock($user, $write);
+        if ($wrote === false) {
+            $layout = array_replace_recursive($layout, wfFail('That person already has an open punch.'));
+            return;
+        }
         msgAdd('Time entry updated.', 'success');
         $layout = array_replace_recursive($layout, ['content'=>['action'=>'eval', 'actionData'=>"jqBiz('#dgTime').datagrid('reload'); jqBiz('#wfTimeEdit').window('close');"]]);
     }
@@ -180,5 +199,6 @@ function wfWithTimeCols(string $confirm): array
         'start_time' => ['order'=>30, 'label'=>'Clock in', 'attr'=>['width'=>150]],
         'end_time'   => ['order'=>40, 'label'=>'Clock out', 'attr'=>['width'=>150]],
         'duration'   => ['order'=>50, 'label'=>'Duration', 'attr'=>['width'=>90]],
+        'claimed'    => ['order'=>60, 'label'=>'Reported location', 'attr'=>['width'=>160]],
     ];
 }
